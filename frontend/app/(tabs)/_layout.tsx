@@ -1,8 +1,7 @@
 import React, { useEffect } from "react";
-import { Tabs, Redirect } from "expo-router";
+import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View, ActivityIndicator, StyleSheet, Platform } from "react-native";
-import { useAuth } from "../../src/AuthContext";
+import { Platform } from "react-native";
 import { colors } from "../../src/theme";
 import {
   requestLocationPermission,
@@ -10,24 +9,10 @@ import {
 } from "../../src/location";
 
 export default function TabsLayout() {
-  const { user, loading } = useAuth();
-
   useEffect(() => {
-    if (user) {
-      requestLocationPermission();
-      requestNotificationPermission();
-    }
-  }, [user]);
-
-  if (loading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator color={colors.brand} size="large" />
-      </View>
-    );
-  }
-
-  if (!user) return <Redirect href="/" />;
+    requestLocationPermission();
+    requestNotificationPermission();
+  }, []);
 
   return (
     <Tabs
@@ -82,12 +67,3 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  loading: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.bg,
-  },
-});

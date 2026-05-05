@@ -28,7 +28,6 @@ import {
   triggerProximityAlert,
 } from "../../src/location";
 import type { Work, VehicleMode } from "../../src/types";
-import { useAuth } from "../../src/AuthContext";
 
 const LE_HAVRE_REGION: Region = {
   latitude: 49.4875,
@@ -64,7 +63,6 @@ const darkMapStyle = [
 
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
-  const { user, signOut } = useAuth();
   const [works, setWorks] = useState<Work[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Work | null>(null);
@@ -221,13 +219,9 @@ export default function MapScreen() {
               </Text>
             </View>
           </View>
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={signOut}
-            testID="logout-btn"
-          >
-            <Ionicons name="log-out-outline" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
+          <View style={styles.iconBtn}>
+            <Ionicons name="radio" size={18} color={colors.accent} />
+          </View>
         </View>
 
         {/* Vehicle mode */}
