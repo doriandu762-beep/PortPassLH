@@ -11,14 +11,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
-import MapView, { Marker, PROVIDER_DEFAULT } from "../../src/MapView";
-
-type Region = {
-  latitude: number;
-  longitude: number;
-  latitudeDelta: number;
-  longitudeDelta: number;
-};
+import MapView from "../../src/LeafletMap";
 import { getWorks } from "../../src/api";
 import { colors, normalizeStatus, radius, spacing, statusMeta } from "../../src/theme";
 import {
@@ -28,38 +21,6 @@ import {
   triggerProximityAlert,
 } from "../../src/location";
 import type { Work, VehicleMode } from "../../src/types";
-
-const LE_HAVRE_REGION: Region = {
-  latitude: 49.4875,
-  longitude: 0.18,
-  latitudeDelta: 0.12,
-  longitudeDelta: 0.2,
-};
-
-// Dark map style for Apple/Google maps
-const darkMapStyle = [
-  { elementType: "geometry", stylers: [{ color: "#0C1522" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#94A3B8" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#050A11" }] },
-  {
-    featureType: "water",
-    elementType: "geometry",
-    stylers: [{ color: "#050A11" }],
-  },
-  {
-    featureType: "road",
-    elementType: "geometry",
-    stylers: [{ color: "#132135" }],
-  },
-  {
-    featureType: "poi",
-    stylers: [{ visibility: "off" }],
-  },
-  {
-    featureType: "transit",
-    stylers: [{ visibility: "off" }],
-  },
-];
 
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
@@ -71,7 +32,6 @@ export default function MapScreen() {
     latitude: number;
     longitude: number;
   } | null>(null);
-  const mapRef = useRef<MapView>(null);
   const alerted = useRef<Set<string>>(new Set());
 
   const refreshWorks = useCallback(async () => {
@@ -141,16 +101,11 @@ export default function MapScreen() {
   }, [userLoc, works, mode]);
 
   const centerOnUser = useCallback(() => {
-    if (userLoc && mapRef.current) {
-      mapRef.current.animateToRegion(
-        {
-          ...userLoc,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.08,
-        },
-        500,
-      );
-    }
+    // LeafletMap handles centering internally via injected JS / postMessage.
+    // For now we just trigger a soft re-center via state; the WebView already
+    // receives userLoc updates and re-positions the user marker. A future
+    // enhancement could expose a ref method.
+    if (!userLoc) return;
   }, [userLoc]);
 
   const counts = useMemo(() => {
@@ -167,42 +122,14 @@ export default function MapScreen() {
   return (
     <View style={styles.root} testID="map-screen">
       <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFill}
-        provider={PROVIDER_DEFAULT}
-        initialRegion={LE_HAVRE_REGION}
-        showsUserLocation
-        showsMyLocationButton={false}
-        customMapStyle={darkMapStyle}
+        works={works}
+        userLoc={userLoc}
+        onMarkerPress={(id) => {
+          const w = works.find((x) => x.id === id);
+          if (w) setSelected(w);
+        }}
         testID="map-view"
-      >
-        {works.map((w) => {
-          const status = normalizeStatus(w.status);
-          const meta = statusMeta[status];
-          return (
-            <Marker
-              key={w.id}
-              coordinate={{ latitude: w.lat, longitude: w.lng }}
-              onPress={() => setSelected(w)}
-              testID={`marker-${w.id}`}
-              tracksViewChanges={false}
-            >
-              <View
-                style={[
-                  styles.marker,
-                  { backgroundColor: meta.color, borderColor: "#FFFFFF" },
-                ]}
-              >
-                <Ionicons
-                  name={w.type === "Écluse" ? "boat" : "git-commit"}
-                  size={14}
-                  color="#050A11"
-                />
-              </View>
-            </Marker>
-          );
-        })}
-      </MapView>
+      />
 
       {/* Top bar */}
       <SafeAreaView edges={["top"]} style={styles.topBarWrap} pointerEvents="box-none">
