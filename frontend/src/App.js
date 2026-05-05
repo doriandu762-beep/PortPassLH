@@ -159,6 +159,14 @@ function App() {
   // ----- Markers -----
   useEffect(() => {
     if (!mapInstance.current) return;
+    const liveIds = new Set(works.map((w) => w.id));
+    // remove markers for works that disappeared
+    Object.keys(markersRef.current).forEach((id) => {
+      if (!liveIds.has(id)) {
+        mapInstance.current.removeLayer(markersRef.current[id]);
+        delete markersRef.current[id];
+      }
+    });
     works.forEach((w) => {
       const existing = markersRef.current[w.id];
       const popup = `<strong>${w.name}</strong><br>${w.type}<br>${STATUS_LABEL[w.status]}`;

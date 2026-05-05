@@ -70,7 +70,6 @@ WORKS_SEED = [
     {"id": "pont-8", "name": "Pont 8", "type": "Pont", "lat": 49.4978789626, "lng": 0.2017334067},
     {"id": "pont-7bis", "name": "Pont 7 bis", "type": "Pont", "lat": 49.4974491119, "lng": 0.1969694927},
     {"id": "pont-5", "name": "Pont 5", "type": "Pont", "lat": 49.4846344572, "lng": 0.1519573561},
-    {"id": "ecluse-francois-1er", "name": "Écluse François 1er", "type": "Écluse", "lat": 49.4764589409, "lng": 0.1752220875},
     {"id": "pont-quinette", "name": "Pont Quinette", "type": "Pont", "lat": 49.4829841586, "lng": 0.1165466441},
     {"id": "pont-aval-vetillart", "name": "Pont aval Vétillart", "type": "Pont", "lat": 49.4806782677, "lng": 0.1382003157},
     {"id": "pont-amont-vetillart", "name": "Pont Amont Vétillart", "type": "Pont", "lat": 49.4813056152, "lng": 0.1407028168},
