@@ -13,7 +13,6 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import unicodedata
 import requests
-from bs4 import BeautifulSoup
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -45,8 +44,32 @@ WORKS_SEED = [
     {"id": "pont-amont-ecluse-francois-1er", "name": "Pont amont Écluse François 1er", "type": "Pont", "lat": 49.476613847, "lng": 0.1751423069},
 ]
 
-HAROPA_URL = "https://www.haropaport.com/fr/actualites/port-actu/etat-des-ouvrages-portuaires"
+HAROPA_URL = "https://www.havre-port.com/map/getPonts"
 StatusType = Literal["ouvert", "fermeture", "bientot", "ferme"]
+
+# HAROPA statut code -> internal status
+HAROPA_STATUS_MAP = {
+    0: "ouvert",
+    1: "ferme",
+    2: "fermeture",
+    3: "ferme",     # travaux
+    11: "bientot",  # bientôt ouvert (manoeuvre)
+}
+
+# Map HAROPA "nom" -> seed work id
+HAROPA_NAME_TO_ID = {
+    "pont 7": "pont-7",
+    "pont 7 bis": "pont-7bis",
+    "pont 8": "pont-8",
+    "pont 6": "pont-6",
+    "pont 5": "pont-5",
+    "pont rouge": "pont-rouge",
+    "pont du hode": "pont-hode",
+    "pont amont fr1": "pont-amont-ecluse-francois-1er",
+    "pont aval fr1": "pont-aval-ecluse-francois-1er",
+    "pont amont vetillart": "pont-amont-vetillart",
+    "pont aval vetillart": "pont-aval-vetillart",
+}
 
 # -------------------- Pydantic Models --------------------
 class Work(BaseModel):
@@ -108,68 +131,79 @@ async def log_history(work_id: str, work_name: str, status: str, source: str):
     }
     await db.status_history.insert_one(entry)
 
-# -------------------- HAROPA Scraper --------------------
-def score_match(name: str, text: str) -> int:
-    n = normalize(name); t = normalize(text)
-    if not n or not t:
-        return 0
-    return sum(1 for p in n.split() if p and p in t)
-
-def extract_status_for_work(work_name: str, text_norm: str) -> Optional[str]:
-    candidates = [work_name, work_name.replace("É", "E"), work_name.replace("é", "e"), work_name.replace("–", " "), work_name.replace("’", " ")]
-    best = sorted(candidates, key=lambda c: -score_match(c, text_norm))[0]
-    key = normalize(best)
-    idx = text_norm.find(key)
-    if idx < 0:
-        return None
-    chunk = text_norm[max(0, idx - 120): idx + 220]
-    if "fermeture imminente" in chunk:
-        return "fermeture"
-    if "bientot ouvert aux vehicules" in chunk:
-        return "bientot"
-    if "ferme" in chunk and "ouvert aux vehicules" not in chunk:
-        return "ferme"
-    if "ouvert aux vehicules" in chunk:
-        return "ouvert"
-    return None
-
-def fetch_haropa_html() -> Optional[str]:
+# -------------------- HAROPA Scraper (JSON API) --------------------
+def fetch_haropa_json() -> Optional[dict]:
     try:
         r = requests.get(HAROPA_URL, timeout=15, headers={"User-Agent": "Mozilla/5.0 PortPassLH/1.0"})
         r.raise_for_status()
-        return r.text
+        return r.json()
     except Exception as e:
         logger.warning(f"HAROPA fetch failed: {e}")
         return None
 
 async def sync_from_haropa() -> dict:
-    html = fetch_haropa_html()
-    if not html:
+    payload = fetch_haropa_json()
+    if not payload or "data" not in payload:
         return {"ok": False, "reason": "fetch_failed", "updated": 0}
-    soup = BeautifulSoup(html, "lxml")
-    body_text = soup.get_text(separator=" ", strip=True)
-    text_norm = normalize(body_text)
 
     cursor = db.works.find({}, {"_id": 0})
     works = await cursor.to_list(1000)
-    updated = 0
+    by_id = {w["id"]: w for w in works}
+
     ts = now_iso()
-    for w in works:
-        new_status = extract_status_for_work(w["name"], text_norm)
-        if new_status and new_status != w.get("status"):
+    updated = 0
+    seen_ids = set()
+    for haropa_id, item in payload["data"].items():
+        nom = item.get("nom", "").strip()
+        statut_code = item.get("statut")
+        if statut_code not in HAROPA_STATUS_MAP:
+            continue
+        new_status = HAROPA_STATUS_MAP[statut_code]
+        norm_name = normalize(nom)
+
+        # Find target work id
+        target_id = HAROPA_NAME_TO_ID.get(norm_name)
+        if not target_id:
+            target_id = f"haropa-{haropa_id}"
+        seen_ids.add(target_id)
+
+        existing = by_id.get(target_id)
+        pos = item.get("position") or {}
+        lat = pos.get("lat")
+        lng = pos.get("lon")
+
+        if existing is None:
+            # Create new work coming from HAROPA only
+            doc = {
+                "id": target_id,
+                "name": nom,
+                "type": "Pont",
+                "lat": lat or 0,
+                "lng": lng or 0,
+                "status": new_status,
+                "updated_at": ts,
+                "source": "haropa",
+            }
+            await db.works.insert_one(doc)
+            await log_history(target_id, nom, new_status, "haropa")
+            updated += 1
+            continue
+
+        if existing.get("status") != new_status:
             await db.works.update_one(
-                {"id": w["id"]},
+                {"id": target_id},
                 {"$set": {"status": new_status, "updated_at": ts, "source": "haropa"}},
             )
-            await log_history(w["id"], w["name"], new_status, "haropa")
+            await log_history(target_id, existing["name"], new_status, "haropa")
             updated += 1
+
     await db.meta.update_one(
         {"_id": "haropa_sync"},
-        {"$set": {"_id": "haropa_sync", "last_sync": ts, "ok": True}},
+        {"$set": {"_id": "haropa_sync", "last_sync": ts, "ok": True, "horo": payload.get("horo")}},
         upsert=True,
     )
-    logger.info(f"HAROPA sync done. {updated} statuses changed.")
-    return {"ok": True, "updated": updated, "synced_at": ts}
+    logger.info(f"HAROPA sync done. {updated} statuses changed (received {len(payload['data'])} items).")
+    return {"ok": True, "updated": updated, "received": len(payload["data"]), "synced_at": ts}
 
 # -------------------- Background scheduler --------------------
 async def haropa_loop():
