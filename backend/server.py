@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -26,6 +26,40 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("portpasslh")
+
+# -------------------- Auth (Emergent Google) --------------------
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
+EMERGENT_SESSION_DATA_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+
+async def get_current_user(request: Request) -> Optional[dict]:
+    token = request.cookies.get("session_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not sess:
+        return None
+    expires_at = sess.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at < datetime.now(timezone.utc):
+        return None
+    user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    return user
+
+async def require_admin(request: Request) -> dict:
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
 
 # -------------------- Static reference data --------------------
 WORKS_SEED = [
@@ -220,6 +254,78 @@ async def haropa_loop():
 async def root():
     return {"app": "PortPassLH", "version": "1.0"}
 
+# -------------------- Auth routes --------------------
+@api_router.post("/auth/session")
+async def auth_session(request: Request, response: Response):
+    body = await request.json()
+    sid = body.get("session_id")
+    if not sid:
+        raise HTTPException(status_code=400, detail="Missing session_id")
+    try:
+        r = requests.get(EMERGENT_SESSION_DATA_URL, headers={"X-Session-ID": sid}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        logger.warning(f"Emergent session-data failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    email = (data.get("email") or "").lower()
+    is_admin = email in ADMIN_EMAILS
+    name = data.get("name") or email
+    picture = data.get("picture") or ""
+    session_token = data.get("session_token") or ""
+    if not email or not session_token:
+        raise HTTPException(status_code=401, detail="Invalid session payload")
+
+    # Upsert user
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": name, "picture": picture, "is_admin": is_admin}},
+        )
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id, "email": email, "name": name, "picture": picture,
+            "is_admin": is_admin, "created_at": now_iso(),
+        })
+
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_id, "session_token": session_token, "email": email,
+        "expires_at": expires_at, "created_at": datetime.now(timezone.utc),
+    })
+
+    response.set_cookie(
+        key="session_token", value=session_token, httponly=True, secure=True,
+        samesite="none", path="/", max_age=7 * 24 * 3600,
+    )
+    return {"user_id": user_id, "email": email, "name": name, "picture": picture, "is_admin": is_admin, "session_token": session_token}
+
+@api_router.get("/auth/me")
+async def auth_me(request: Request):
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {
+        "user_id": user["user_id"], "email": user["email"], "name": user.get("name"),
+        "picture": user.get("picture"), "is_admin": bool(user.get("is_admin")),
+    }
+
+@api_router.post("/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    token = request.cookies.get("session_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/")
+    return {"ok": True}
+
 @api_router.get("/works", response_model=List[Work])
 async def list_works():
     docs = await db.works.find({}, {"_id": 0}).to_list(1000)
@@ -229,7 +335,7 @@ async def list_works():
     return docs
 
 @api_router.put("/works/{work_id}/status", response_model=Work)
-async def update_status(work_id: str, payload: StatusUpdate):
+async def update_status(work_id: str, payload: StatusUpdate, admin: dict = Depends(require_admin)):
     work = await db.works.find_one({"id": work_id}, {"_id": 0})
     if not work:
         raise HTTPException(status_code=404, detail="Work not found")
@@ -243,7 +349,7 @@ async def update_status(work_id: str, payload: StatusUpdate):
     return updated
 
 @api_router.post("/works/refresh")
-async def manual_refresh():
+async def manual_refresh(admin: dict = Depends(require_admin)):
     return await sync_from_haropa()
 
 @api_router.get("/works/{work_id}/history", response_model=List[HistoryEntry])
@@ -280,7 +386,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origin_regex=".*",
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -7,6 +7,20 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+const EMERGENT_AUTH_URL = "https://auth.emergentagent.com/";
+
+const TOKEN_KEY = "ppl_session_token";
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) {
+  if (t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+axios.interceptors.request.use((config) => {
+  const t = getToken();
+  if (t) config.headers.Authorization = `Bearer ${t}`;
+  return config;
+});
 
 const STATUS_COLOR = {
   ouvert: "#2dd36f",
@@ -53,29 +67,77 @@ function App() {
   const markersRef = useRef({});
   const userMarkerRef = useRef(null);
   const lastAlertId = useRef(null);
+  const authProcessed = useRef(false);
 
   const [works, setWorks] = useState([]);
-  const [mode, setMode] = useState("truck"); // 'truck' | 'car'
+  const [mode, setMode] = useState("truck");
   const [position, setPosition] = useState(null);
   const [gpsLabel, setGpsLabel] = useState("GPS...");
   const [subLabel, setSubLabel] = useState("Préparation...");
-  const [alert, setAlert] = useState(null); // {kind:'danger'|'warning', text}
-  const [view, setView] = useState("map"); // 'map' | 'stats' | 'history'
+  const [alert, setAlert] = useState(null);
+  const [view, setView] = useState("map");
   const [historyEntries, setHistoryEntries] = useState([]);
   const [stats, setStats] = useState(null);
+  const [sheetOpen, setSheetOpen] = useState(true);
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const alertDistance = mode === "truck" ? 2000 : 1000;
+  const isAdmin = !!user?.is_admin;
+
+  // ----- Auth: handle #session_id and check existing session -----
+  useEffect(() => {
+    const run = async () => {
+      if (authProcessed.current) return;
+      authProcessed.current = true;
+      try {
+        if (window.location.hash && window.location.hash.includes("session_id=")) {
+          const sid = new URLSearchParams(window.location.hash.slice(1)).get("session_id");
+          history.replaceState(null, "", window.location.pathname);
+          if (sid) {
+            try {
+              const r = await axios.post(`${API}/auth/session`, { session_id: sid });
+              if (r.data.session_token) setToken(r.data.session_token);
+              setUser(r.data);
+            } catch (e) { /* ignore */ }
+          }
+        }
+        try {
+          const r = await axios.get(`${API}/auth/me`);
+          setUser(r.data);
+        } catch { setUser(null); setToken(null); }
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+    run();
+  }, []);
+
+  const login = () => {
+    const redirectUrl = window.location.origin + "/";
+    window.location.href = `${EMERGENT_AUTH_URL}?redirect=${encodeURIComponent(redirectUrl)}`;
+  };
+  const logout = async () => {
+    try { await axios.post(`${API}/auth/logout`); } catch {}
+    setToken(null);
+    setUser(null);
+  };
 
   // ----- Map init -----
   useEffect(() => {
     if (mapInstance.current) return;
     const map = L.map(mapRef.current, { zoomControl: false }).setView([49.487, 0.19], 12);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap",
-    }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap" }).addTo(map);
     L.control.zoom({ position: "bottomright" }).addTo(map);
     mapInstance.current = map;
   }, []);
+
+  // ----- Re-invalidate map size when sheet opens/closes -----
+  useEffect(() => {
+    if (mapInstance.current) {
+      setTimeout(() => mapInstance.current.invalidateSize(), 320);
+    }
+  }, [sheetOpen]);
 
   // ----- Fetch works -----
   const fetchWorks = useCallback(async () => {
@@ -83,7 +145,7 @@ function App() {
       const r = await axios.get(`${API}/works`);
       setWorks(r.data);
       setSubLabel("HAROPA connecté");
-    } catch (e) {
+    } catch {
       setSubLabel("Connexion impossible");
     }
   }, []);
@@ -94,7 +156,7 @@ function App() {
     return () => clearInterval(t);
   }, [fetchWorks]);
 
-  // ----- Draw / refresh markers when works change -----
+  // ----- Markers -----
   useEffect(() => {
     if (!mapInstance.current) return;
     works.forEach((w) => {
@@ -104,9 +166,7 @@ function App() {
         existing.setIcon(iconFor(w));
         existing.setPopupContent(popup);
       } else {
-        const m = L.marker([w.lat, w.lng], { icon: iconFor(w) })
-          .addTo(mapInstance.current)
-          .bindPopup(popup);
+        const m = L.marker([w.lat, w.lng], { icon: iconFor(w) }).addTo(mapInstance.current).bindPopup(popup);
         markersRef.current[w.id] = m;
       }
     });
@@ -114,10 +174,7 @@ function App() {
 
   // ----- Geolocation -----
   useEffect(() => {
-    if (!("geolocation" in navigator)) {
-      setGpsLabel("GPS indisponible");
-      return;
-    }
+    if (!("geolocation" in navigator)) { setGpsLabel("GPS indisponible"); return; }
     const id = navigator.geolocation.watchPosition(
       (p) => setPosition({ lat: p.coords.latitude, lng: p.coords.longitude }),
       () => setGpsLabel("GPS refusé"),
@@ -126,22 +183,19 @@ function App() {
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
-  // ----- User marker + alerts -----
+  // ----- User marker -----
   useEffect(() => {
     if (!position || !mapInstance.current) return;
     if (!userMarkerRef.current) {
       userMarkerRef.current = L.circleMarker([position.lat, position.lng], {
-        radius: 8,
-        color: "#ffffff",
-        weight: 3,
-        fillColor: "#4da3ff",
-        fillOpacity: 1,
+        radius: 8, color: "#ffffff", weight: 3, fillColor: "#4da3ff", fillOpacity: 1,
       }).addTo(mapInstance.current);
     } else {
       userMarkerRef.current.setLatLng([position.lat, position.lng]);
     }
   }, [position]);
 
+  // ----- Alerts -----
   useEffect(() => {
     if (!position || works.length === 0) return;
     let closestDanger = null;
@@ -151,11 +205,7 @@ function App() {
       if (!nearest || d < nearest.d) nearest = { w, d };
       const danger = w.status === "ferme" || w.status === "fermeture";
       if (danger && d <= alertDistance) {
-        if (
-          !closestDanger ||
-          d < closestDanger.d ||
-          (w.status === "ferme" && closestDanger.w.status !== "ferme")
-        ) {
+        if (!closestDanger || d < closestDanger.d || (w.status === "ferme" && closestDanger.w.status !== "ferme")) {
           closestDanger = { w, d };
         }
       }
@@ -171,76 +221,52 @@ function App() {
         if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
       }
       if (lastAlertId.current !== w.id && "speechSynthesis" in window) {
-        const text =
-          w.status === "ferme"
-            ? `${w.name} fermé dans ${meters} mètres`
-            : `${w.name} fermeture imminente dans ${meters} mètres`;
+        const text = w.status === "ferme"
+          ? `${w.name} fermé dans ${meters} mètres`
+          : `${w.name} fermeture imminente dans ${meters} mètres`;
         speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = "fr-FR";
+        const u = new SpeechSynthesisUtterance(text); u.lang = "fr-FR";
         speechSynthesis.speak(u);
         lastAlertId.current = w.id;
       }
-    } else {
-      setAlert(null);
-      lastAlertId.current = null;
-    }
+    } else { setAlert(null); lastAlertId.current = null; }
     if (nearest) setGpsLabel(`${nearest.w.name} ${Math.round(nearest.d)} m`);
   }, [position, works, alertDistance]);
 
   // ----- Actions -----
   const setStatus = async (id, status) => {
+    if (!isAdmin) return;
     try {
       const r = await axios.put(`${API}/works/${id}/status`, { status });
       setWorks((prev) => prev.map((w) => (w.id === id ? r.data : w)));
     } catch (e) {
-      console.error(e);
+      if (e?.response?.status === 401 || e?.response?.status === 403) {
+        setSubLabel("Connexion admin requise");
+      }
     }
   };
-
   const simulateNear = (id) => {
-    const w = works.find((x) => x.id === id);
-    if (!w) return;
+    const w = works.find((x) => x.id === id); if (!w) return;
     setPosition({ lat: w.lat + 0.002, lng: w.lng + 0.002 });
     if (mapInstance.current) mapInstance.current.setView([w.lat, w.lng], 15, { animate: true });
   };
-
   const refreshHaropa = async () => {
+    if (!isAdmin) return;
     setSubLabel("Synchronisation HAROPA...");
-    try {
-      await axios.post(`${API}/works/refresh`);
-      await fetchWorks();
-      setSubLabel("HAROPA synchronisé");
-    } catch {
-      setSubLabel("Sync échouée");
-    }
+    try { await axios.post(`${API}/works/refresh`); await fetchWorks(); setSubLabel("HAROPA synchronisé"); }
+    catch { setSubLabel("Sync échouée"); }
   };
-
   const openHistory = async () => {
-    setView("history");
-    try {
-      const r = await axios.get(`${API}/history?limit=200`);
-      setHistoryEntries(r.data);
-    } catch {}
+    setView("history"); setSheetOpen(true);
+    try { const r = await axios.get(`${API}/history?limit=200`); setHistoryEntries(r.data); } catch {}
   };
-
   const openStats = async () => {
-    setView("stats");
-    try {
-      const r = await axios.get(`${API}/stats`);
-      setStats(r.data);
-    } catch {}
+    setView("stats"); setSheetOpen(true);
+    try { const r = await axios.get(`${API}/stats`); setStats(r.data); } catch {}
   };
 
-  // Stats counts (from current works array)
-  const liveCounts = works.reduce(
-    (acc, w) => {
-      acc[w.status] = (acc[w.status] || 0) + 1;
-      return acc;
-    },
-    { ouvert: 0, fermeture: 0, bientot: 0, ferme: 0 }
-  );
-
+  const liveCounts = works.reduce((acc, w) => { acc[w.status] = (acc[w.status] || 0) + 1; return acc; },
+    { ouvert: 0, fermeture: 0, bientot: 0, ferme: 0 });
   const chartData = [
     { name: "Ouvert", value: liveCounts.ouvert, color: "#2dd36f" },
     { name: "Fermeture", value: liveCounts.fermeture, color: "#ff9f0a" },
@@ -252,7 +278,6 @@ function App() {
     <div className="ppl-root">
       <div ref={mapRef} id="map" data-testid="map-canvas" />
 
-      {/* Top overlay */}
       <div className="overlay">
         <div className="topbar">
           <div className="brand" data-testid="brand-pill">
@@ -262,59 +287,53 @@ function App() {
               <span data-testid="sub-label">{subLabel}</span>
             </div>
           </div>
-          <div className="chip" data-testid="gps-status">{gpsLabel}</div>
+          <div className="top-right">
+            <div className="chip" data-testid="gps-status">{gpsLabel}</div>
+            {authChecked && (
+              isAdmin ? (
+                <button className="chip-btn" onClick={logout} data-testid="logout-btn" title={user.email}>
+                  ⏻ Admin
+                </button>
+              ) : (
+                <button className="chip-btn primary" onClick={login} data-testid="login-btn">
+                  🔐 Admin
+                </button>
+              )
+            )}
+          </div>
         </div>
         <div className="nav-tabs">
-          <button
-            className={view === "map" ? "tab active" : "tab"}
-            onClick={() => setView("map")}
-            data-testid="tab-map"
-          >Carte</button>
-          <button
-            className={view === "stats" ? "tab active" : "tab"}
-            onClick={openStats}
-            data-testid="tab-stats"
-          >Stats</button>
-          <button
-            className={view === "history" ? "tab active" : "tab"}
-            onClick={openHistory}
-            data-testid="tab-history"
-          >Historique</button>
+          <button className={view === "map" ? "tab active" : "tab"} onClick={() => { setView("map"); setSheetOpen(true); }} data-testid="tab-map">Carte</button>
+          <button className={view === "stats" ? "tab active" : "tab"} onClick={openStats} data-testid="tab-stats">Stats</button>
+          <button className={view === "history" ? "tab active" : "tab"} onClick={openHistory} data-testid="tab-history">Historique</button>
         </div>
-        {alert && (
-          <div className={`alert ${alert.kind}`} data-testid="proximity-alert">{alert.text}</div>
-        )}
+        {alert && <div className={`alert ${alert.kind}`} data-testid="proximity-alert">{alert.text}</div>}
       </div>
 
-      {/* Bottom sheet */}
-      <div className="sheet">
+      <div className={`sheet ${sheetOpen ? "open" : "closed"}`}>
         <div className="sheet-card">
-          <div className="grab" />
+          <button
+            className="grab-btn"
+            onClick={() => setSheetOpen((v) => !v)}
+            aria-label={sheetOpen ? "Réduire le panneau" : "Ouvrir le panneau"}
+            data-testid="sheet-toggle"
+          >
+            <span className="grab" />
+            <span className="grab-caret">{sheetOpen ? "▾" : "▴"}</span>
+          </button>
 
-          {view === "map" && (
+          {sheetOpen && view === "map" && (
             <>
               <div className="stats-row">
-                <div className="stat">
-                  <label>Mode</label>
-                  <strong data-testid="mode-label">{mode === "truck" ? "Camion" : "Voiture"}</strong>
-                </div>
-                <div className="stat">
-                  <label>Alerte</label>
-                  <strong data-testid="distance-label">{alertDistance} m</strong>
-                </div>
+                <div className="stat"><label>Mode</label><strong data-testid="mode-label">{mode === "truck" ? "Camion" : "Voiture"}</strong></div>
+                <div className="stat"><label>Alerte</label><strong data-testid="distance-label">{alertDistance} m</strong></div>
               </div>
               <div className="actions">
-                <button
-                  className={mode === "truck" ? "btn-primary" : "btn-dark"}
-                  onClick={() => setMode("truck")}
-                  data-testid="mode-truck-btn"
-                >🚛 Camion</button>
-                <button
-                  className={mode === "car" ? "btn-primary" : "btn-dark"}
-                  onClick={() => setMode("car")}
-                  data-testid="mode-car-btn"
-                >🚗 Voiture</button>
-                <button className="btn-dark" onClick={refreshHaropa} data-testid="refresh-haropa-btn">↻ HAROPA</button>
+                <button className={mode === "truck" ? "btn-primary" : "btn-dark"} onClick={() => setMode("truck")} data-testid="mode-truck-btn">🚛 Camion</button>
+                <button className={mode === "car" ? "btn-primary" : "btn-dark"} onClick={() => setMode("car")} data-testid="mode-car-btn">🚗 Voiture</button>
+                {isAdmin && (
+                  <button className="btn-dark" onClick={refreshHaropa} data-testid="refresh-haropa-btn">↻ HAROPA</button>
+                )}
               </div>
               <div className="legend" data-testid="legend">
                 🟢 Ouvert aux véhicules<br />
@@ -331,27 +350,25 @@ function App() {
                 </div>
               </div>
               <div className="card">
-                <strong>Ouvrages</strong>
+                <strong>Ouvrages {!isAdmin && <span className="readonly-tag">lecture seule</span>}</strong>
                 <div className="works-list" data-testid="works-list">
                   {works.map((w) => (
                     <div key={w.id} className="work-item" data-testid={`work-${w.id}`}>
                       <div className="work-top">
                         <div>
                           <strong>{w.name}</strong>
-                          <div className="small">
-                            {w.type} • {w.lat.toFixed(5)}, {w.lng.toFixed(5)}
-                          </div>
+                          <div className="small">{w.type} • {w.lat.toFixed(5)}, {w.lng.toFixed(5)}</div>
                         </div>
-                        <span className={`badge ${STATUS_BADGE[w.status]}`} data-testid={`badge-${w.id}`}>
-                          {STATUS_LABEL[w.status]}
-                        </span>
+                        <span className={`badge ${STATUS_BADGE[w.status]}`} data-testid={`badge-${w.id}`}>{STATUS_LABEL[w.status]}</span>
                       </div>
-                      <div className="actions" style={{ marginTop: 10 }}>
-                        <button className="btn-good" onClick={() => setStatus(w.id, "ouvert")} data-testid={`set-ouvert-${w.id}`}>Ouvert</button>
-                        <button className="btn-warn" onClick={() => setStatus(w.id, "fermeture")} data-testid={`set-fermeture-${w.id}`}>Fermeture</button>
-                        <button className="btn-dark" onClick={() => setStatus(w.id, "bientot")} data-testid={`set-bientot-${w.id}`}>Bientôt</button>
-                        <button className="btn-bad" onClick={() => setStatus(w.id, "ferme")} data-testid={`set-ferme-${w.id}`}>Fermé</button>
-                      </div>
+                      {isAdmin && (
+                        <div className="actions" style={{ marginTop: 10 }}>
+                          <button className="btn-good" onClick={() => setStatus(w.id, "ouvert")} data-testid={`set-ouvert-${w.id}`}>Ouvert</button>
+                          <button className="btn-warn" onClick={() => setStatus(w.id, "fermeture")} data-testid={`set-fermeture-${w.id}`}>Fermeture</button>
+                          <button className="btn-dark" onClick={() => setStatus(w.id, "bientot")} data-testid={`set-bientot-${w.id}`}>Bientôt</button>
+                          <button className="btn-bad" onClick={() => setStatus(w.id, "ferme")} data-testid={`set-ferme-${w.id}`}>Fermé</button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -359,7 +376,7 @@ function App() {
             </>
           )}
 
-          {view === "stats" && (
+          {sheetOpen && view === "stats" && (
             <div data-testid="stats-view">
               <div className="stats-row">
                 <div className="stat"><label>Ouvrages</label><strong>{stats?.total_works ?? works.length}</strong></div>
@@ -389,7 +406,7 @@ function App() {
             </div>
           )}
 
-          {view === "history" && (
+          {sheetOpen && view === "history" && (
             <div data-testid="history-view">
               <div className="card">
                 <strong>Historique récent</strong>
