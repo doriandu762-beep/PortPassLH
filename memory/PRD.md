@@ -29,15 +29,17 @@ Convertir la page HTML PortPassLH V5 (suivi temps réel des ponts/écluses du po
 - Mode véhicule : truck (2000 m) / car (1000 m)
 
 ## Implemented (2026-01-13)
-- API REST : `GET /api/works`, `PUT /api/works/{id}/status`, `POST /api/works/refresh`, `GET /api/works/{id}/history`, `GET /api/history`, `GET /api/stats`
+- API REST : `GET /api/works`, `PUT /api/works/{id}/status` 🔒, `POST /api/works/refresh` 🔒, `GET /api/works/{id}/history`, `GET /api/history`, `GET /api/stats`
+- **Auth Emergent Google** : allowlist via env `ADMIN_EMAILS=Mrxxdoxdoxx@gmail.com`. Bearer token (localStorage) à cause du K8s ingress qui force ACAO=*. Visiteurs en lecture seule, admin a accès aux mutations.
+- Routes auth : `POST /api/auth/session`, `GET /api/auth/me`, `POST /api/auth/logout`
 - **Scraping HAROPA opérationnel via API JSON officielle `https://www.havre-port.com/map/getPonts`** (sync 5 min)
   - Mapping statut HAROPA: 0→ouvert, 1→ferme, 2→fermeture, 3→ferme(travaux), 11→bientot
   - 11 ponts mappés sur les seeds par alias + 3 nouveaux ouvrages auto-créés (Pont de l'Eure, Pont amont/aval Quinette)
 - Historique persistant (source = `manual` | `haropa` | `seed`)
-- UI dark portuaire identique à la maquette HTML
+- UI dark portuaire : panneau coulissant **ouvrable/fermable au clic** sur la poignée, boutons agrandis (min 54 px), tag "lecture seule" pour visiteurs
 - Vue Stats avec BarChart 4 statuts + dernière sync HAROPA
 - Vue Historique (200 derniers événements)
-- Tests backend (7/7) + frontend (Playwright) : 100 %
+- Tests backend (17/17) + frontend (Playwright complet visiteur + admin + toggle + logout) : 100 %
 
 ## Backlog (P1 / P2)
 - P1 : Indexes Mongo sur `status_history.changed_at` et `work_id`
