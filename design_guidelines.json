@@ -1,0 +1,118 @@
+{
+  "project": "PortPassLH",
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Industrial Marine Variant)",
+  "design_philosophy": "A highly functional, tactical dashboard tailored for truck drivers and port operators. The design abandons generic 'tech dark mode' in favor of deep nautical blues. It prioritizes extreme glanceability, contrast, and cognitive ease. Status colors act as urgent signal lights against an obsidian-navy void.",
+  "colors": {
+    "background": {
+      "app": "#050A11",
+      "surface": "#0C1522",
+      "surface_elevated": "#132135",
+      "overlay": "rgba(5, 10, 17, 0.85)"
+    },
+    "border": {
+      "default": "#1E2F45",
+      "focus": "#3B82F6"
+    },
+    "text": {
+      "primary": "#F8FAFC",
+      "secondary": "#94A3B8",
+      "muted": "#64748B",
+      "inverse": "#050A11"
+    },
+    "brand": {
+      "primary": "#2563EB",
+      "primary_active": "#1D4ED8",
+      "accent": "#0EA5E9"
+    },
+    "status": {
+      "open_vert": {
+        "color": "#10B981",
+        "bg_subtle": "rgba(16, 185, 129, 0.15)",
+        "label": "Ouvert"
+      },
+      "fermeture_imminente_orange": {
+        "color": "#F97316",
+        "bg_subtle": "rgba(249, 115, 22, 0.15)",
+        "label": "Fermeture Imminente"
+      },
+      "bientot_ouvert_jaune": {
+        "color": "#EAB308",
+        "bg_subtle": "rgba(234, 179, 8, 0.15)",
+        "label": "Bientôt Ouvert"
+      },
+      "ferme_rouge": {
+        "color": "#EF4444",
+        "bg_subtle": "rgba(239, 68, 68, 0.15)",
+        "label": "Fermé"
+      }
+    }
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Chivo, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "IBM Plex Mono, monospace"
+    },
+    "rules": {
+      "h1": "text-4xl font-black tracking-tight text-[#F8FAFC]",
+      "h2": "text-2xl font-bold tracking-tight text-[#F8FAFC]",
+      "h3": "text-lg font-semibold tracking-tight text-[#F8FAFC]",
+      "body": "text-base font-normal leading-relaxed text-[#94A3B8]",
+      "label_overline": "text-xs font-bold uppercase tracking-[0.2em] text-[#64748B]",
+      "numbers": "font-mono font-medium tracking-tight"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous touch targets for drivers, strictly gridded for rapid data consumption.",
+    "screen_padding": "p-6",
+    "card_padding": "p-5",
+    "gap_standard": "gap-4",
+    "gap_large": "gap-8"
+  },
+  "components": {
+    "bottom_tabs": {
+      "style": "Solid background (#050A11) with a 1px top border (#1E2F45). Active tab uses the brand primary color (#2563EB) with a subtle text glow or underline indicator. Inactive tabs are muted (#64748B).",
+      "icons": "Use Phosphor Icons (Duotone) for a technical feel, or standard Expo vector icons (Feather) if constrained."
+    },
+    "map_markers": {
+      "style": "Custom views rendering as large, touchable circles with a 2px solid white border and the background color matching the exact status. Do not use default red pins.",
+      "active_state": "If 'fermeture_imminente' or 'bientot_ouvert', apply a subtle scaling/opacity pulse animation to draw attention."
+    },
+    "status_badges": {
+      "style": "Pill-shaped containers. Background is the `bg_subtle` value of the status, text and 1px border is the solid `color` value.",
+      "typography": "text-xs font-bold uppercase tracking-wider"
+    },
+    "cards_and_lists": {
+      "style": "Flat surface (#0C1522), no shadow (to preserve dark mode contrast), 1px solid border (#1E2F45), rounded-xl.",
+      "history_item": "Left border strip (4px wide) reflecting the status color. Content includes timestamp (mono font) and infrastructure name."
+    },
+    "auth_screen": {
+      "layout": "Full-screen background image of the port at night. Heavy dark overlay (`#050A11` at 85% opacity). Content aligned bottom-center: Logo/Title, subtitle, and massive Google Auth button.",
+      "google_btn": "White background, black text, Google logo, massive touch target (min-h-[56px]), rounded-full."
+    },
+    "vehicle_toggle": {
+      "style": "Segmented control acting as a physical switch. Background `#0C1522`. Active state uses a glowing `#2563EB` background. Used to switch between Camion (2000m) and Voiture (1000m)."
+    }
+  },
+  "media_urls": {
+    "auth_hero_background": {
+      "url": "https://images.unsplash.com/photo-1762228015786-0aeed4008674?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzl8MHwxfHNlYXJjaHwyfHxpbmR1c3RyaWFsJTIwc2hpcHBpbmclMjBwb3J0JTIwbmlnaHR8ZW58MHx8fHwxNzc4MDA1MjE5fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Industrial shipping port at dusk, perfect for dark mode auth screen background."
+    }
+  },
+  "testing_requirements": {
+    "attributes": "All interactive elements MUST use `testID` attribute (React Native equivalent of data-testid).",
+    "convention": "kebab-case, role-based. Examples: `testID='tab-map'`, `testID='auth-google-btn'`, `testID='marker-pont-normandie'`."
+  },
+  "instructions_to_main_agent": [
+    "This is a React Native Expo application. Apply these design tokens using StyleSheet or a utility library like NativeWind.",
+    "Do NOT use pure #000000. Use the exact background tokens provided (#050A11 for app background).",
+    "Ensure contrast rules are met; text on status badges or buttons must be visible.",
+    "Implement the interactive map using `react-native-maps` and customize the map style JSON to a dark mode theme that removes POIs and highlights water/roads, matching the `#050A11` aesthetic.",
+    "For audio alerts (synthèse vocale), ensure it does not interrupt critical system audio.",
+    "Use JS files (.js/.jsx), not TypeScript (.ts/.tsx) as per the workspace setup.",
+    "Do not add any standard header over the map. Make the map full screen beneath the transparent status bar, pushing interactive elements to a bottom sheet or floating cards.",
+    "Do not use the standard React Native Button. Create custom TouchableOpacity components to match the design system tokens perfectly."
+  ]
+}
