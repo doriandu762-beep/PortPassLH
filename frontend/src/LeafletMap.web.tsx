@@ -38,7 +38,7 @@ const HTML = `<!DOCTYPE html>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
   var map = L.map('map', { zoomControl: true }).setView([${INITIAL_LAT}, ${INITIAL_LNG}], ${INITIAL_ZOOM});
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '© OpenStreetMap · CartoDB' }).addTo(map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '© OpenStreetMap · CartoDB' }).addTo(map);
   var markersLayer = L.layerGroup().addTo(map);
   var userMarker = null;
   window.addEventListener('message', function (ev) {

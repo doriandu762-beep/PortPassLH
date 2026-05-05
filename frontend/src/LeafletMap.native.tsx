@@ -54,7 +54,7 @@ const HTML = `<!DOCTYPE html>
   var map = L.map('map', { zoomControl: true, attributionControl: true })
     .setView([${INITIAL_LAT}, ${INITIAL_LNG}], ${INITIAL_ZOOM});
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
     attribution: '© OpenStreetMap · CartoDB'
   }).addTo(map);
