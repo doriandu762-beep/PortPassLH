@@ -1,0 +1,77 @@
+{
+  "summary": "Frontend-only review of PortPassLH Expo mobile app consuming an external FastAPI backend. Verified login screen UI/UX, external backend reachability via curl + pytest, source-code review of auth/api/location/permissions, and testID coverage. Login screen renders perfectly with all expected branding (PortPassLH, hero image, 'Se connecter avec Google', 'Accès réservé aux utilisateurs autorisés', 'CONNEXION SÉCURISÉE', 'Port du Havre'); zero console errors; unauthenticated user is correctly NOT redirected to (tabs). External backend endpoints (/api/works, /api/stats, /api/history, /api/auth/me, /api/auth/session) all respond as expected. Authenticated tabs (Map/Stats/History) cannot be reached by automated test because Emergent Google OAuth requires interactive consent — these are marked 'manual verification required' as instructed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "login", "issues": ["No issues. Touch target for Google button is 327x56 (>=44pt). Hero contrast is good (rgba(5,10,17,0.85) overlay on dark port image)."]}
+    ],
+    "react_native_issues": [
+      {"component": "expo packages", "issue": "Metro warns about expected versions: expo-location@55.1.9 vs ~19.0.8, expo-notifications@55.0.22 vs ~0.32.17, expo-secure-store@55.0.13 vs ~15.0.8, expo-speech@55.0.13 vs ~14.0.8, react-native-maps@1.27.2 vs 1.20.1. App still bundles & runs cleanly. Per project rules, accept package.json versions as source of truth — flagging only for awareness."},
+      {"component": "shadow* deprecation", "issue": "Bundler logs '\"shadow*\" style props are deprecated. Use \"boxShadow\".' originating from FAB/sheet styles in app/(tabs)/index.tsx. Cosmetic only on web; native still uses shadow* correctly."},
+      {"component": "expo-notifications on web", "issue": "Bundler logs '[expo-notifications] Listening to push token changes is not yet fully supported on web.' Expected; user requested LOCAL notifications only (no push). No action required."}
+    ]
+  },
+  "code_review_findings": {
+    "src/api.ts": "OK — uses expo-secure-store (not AsyncStorage/localStorage); attaches 'Authorization: Bearer <token>' on every request when token exists; reads BASE_URL from process.env.EXPO_PUBLIC_PORTPASS_BACKEND_URL with no fallback; throws on non-2xx. exchangeSession() correctly POSTs {session_id} to /api/auth/session and parses session_token | access_token | token | Set-Cookie session_token.",
+    "src/AuthContext.tsx": "OK — no hardcoded URLs/redirects; uses WebBrowser.openAuthSessionAsync(`https://auth.emergentagent.com/?redirect=${encodeURIComponent(BACKEND_URL+'/auth/callback')}`); parses session_id from URL fragment after '#'; persists token via setToken (SecureStore); refreshes user via getMe(); signOut clears token + calls logoutApi.",
+    "app/(tabs)/_layout.tsx": "OK — `if (!user) return <Redirect href=\"/\" />` correctly gates tabs; tabBarButtonTestID set for tab-map/tab-stats/tab-history; permissions requested when user is authenticated.",
+    "src/location.ts": "OK — Haversine implementation matches reference formula (R=6371000 m); thresholdForMode returns 1000 for voiture, 2000 for camion as required; triggerProximityAlert short-circuits on 'ouvert' status; fires Haptics.notificationAsync(Warning) + Notifications.scheduleNotificationAsync({trigger:null}) + Speech.speak with language:'fr-FR'.",
+    "app.json": "OK — iOS NSLocationWhenInUseUsageDescription + NSLocationAlwaysAndWhenInUseUsageDescription set in French; Android permissions ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, VIBRATE, POST_NOTIFICATIONS declared; expo-location and expo-notifications plugins configured; expo-secure-store plugin declared. UIBackgroundModes:[location] declared.",
+    "testIDs": "All required testIDs present in source: auth-screen, auth-google-btn, auth-error, auth-loading, tab-map, tab-stats, tab-history (via tabBarButtonTestID), map-screen, map-view, marker-${w.id}, mode-voiture, mode-camion, locate-btn, logout-btn, work-sheet, sheet-close, stats-screen, stat-total, stat-open, stat-closing, stat-soon, stat-closed, stat-events-24h, history-screen, history-row-${id}.",
+    "MapView.web.tsx": "Stub renders informative placeholder on web (per agent_to_agent_context_note — not a bug). Native uses react-native-maps via MapView.native.tsx."
+  },
+  "external_backend_smoke": {
+    "GET /api/works": "200, list[15], shape {id,name,type,lat,lng,status,updated_at,source} ✓",
+    "GET /api/stats": "200, {total_works:15, open_count:13, closing_count:0, soon_count:0, closed_count:2, total_events_24h:35, last_haropa_sync} ✓",
+    "GET /api/history?limit=5": "200, list[5], shape {id,work_id,work_name,status,source,changed_at} ✓",
+    "GET /api/auth/me (no token)": "401 {detail: 'Not authenticated'} ✓",
+    "GET /api/auth/me (bogus token)": "401/403 ✓",
+    "POST /api/auth/session (bogus session_id)": "4xx ✓"
+  },
+  "frontend_ui_smoke": {
+    "viewport": "375x667 (mobile)",
+    "auth-screen rendered": true,
+    "auth-google-btn rendered": true,
+    "google_button_size": "327x56 (>=44pt touch target)",
+    "branding_strings_present": ["PortPassLH","Statut en temps réel","Port du Havre","CONNEXION SÉCURISÉE","Se connecter avec Google","Accès réservé aux utilisateurs autorisés"],
+    "tab-map/tab-stats/tab-history present (should be False)": false,
+    "map-screen present (should be False)": false,
+    "console_errors": 0,
+    "google_button_click": "did not crash; no auth.emergentagent.com network request observed because expo-web-browser on web platform opens a popup that Playwright's request listener does not intercept — this is expected, not a bug. On real iOS/Android devices openAuthSessionAsync opens a SafariViewController/Custom Tab pointing to https://auth.emergentagent.com/?redirect=<backend>/auth/callback as coded."
+  },
+  "manual_verification_required": [
+    "End-to-end Google OAuth from Mrxxdoxdoxx@gmail.com (interactive consent + redirect to /auth/callback#session_id=...).",
+    "Map screen with native react-native-maps (web shows stub by design).",
+    "Proximity alert: vibration + local notification + French TTS when within 1000m (voiture) / 2000m (camion) of a non-'ouvert' work.",
+    "Vehicle mode toggle live behaviour on map.",
+    "Stats and History screens populated post-login (data flow verified at API layer)."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_external_portpass_backend.py",
+    "/app/test_reports/pytest/iteration_1.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Address Expo SDK package version warnings if/when stable (expo-location, expo-notifications, expo-secure-store, expo-speech, react-native-maps). Per project rules package.json is source of truth — no action required if main agent intentionally pinned newer versions.",
+    "OPTIONAL: Migrate shadow* style props to boxShadow on web variant or wrap with Platform.select to silence the deprecation log."
+  ],
+  "critical_code_review_comments": [
+    "All auth tokens stored in expo-secure-store (TOKEN_KEY='portpass_session_token'); never written to AsyncStorage or localStorage. ✓",
+    "No hardcoded backend URL or redirect — strictly EXPO_PUBLIC_PORTPASS_BACKEND_URL. ✓",
+    "Haversine + thresholds (1000m/2000m) match spec exactly. ✓",
+    "Proximity alerts skip status='ouvert' as required. ✓",
+    "Bearer token attached on all authenticated requests via central request() helper. ✓",
+    "Auth provider redirect on null user covers gating from (tabs)/_layout.tsx. ✓"
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100% (login screen + code review; authenticated tabs require manual Google sign-in)"},
+  "seed_data_creation": "None. External backend is shared and read-only for this test pass.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "App is a pure frontend consumer of external backend at https://eb4c5836-043c-4dd0-9b6c-abf3c914bec2.preview.emergentagent.com. /app/backend is intentionally a placeholder — do NOT add tests there. Re-run /app/backend/tests/test_external_portpass_backend.py for backend regressions. To test authenticated flows, log in interactively as Mrxxdoxdoxx@gmail.com on a real device or in a non-headless browser; the web preview's MapView is a placeholder by design (MapView.web.tsx). All required testIDs are wired and were confirmed in source.",
+  "rca_of_issue": "N/A — no defects found."
+}
